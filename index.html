@@ -64,6 +64,28 @@
             font-weight: 700;
         }
         
+        .sync-status {
+            background: rgba(255,255,255,0.1);
+            padding: 10px 15px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+        }
+        
+        .sync-status.syncing {
+            background: rgba(255,193,7,0.2);
+        }
+        
+        .sync-status.connected {
+            background: rgba(76,175,80,0.2);
+        }
+        
+        .sync-status.disconnected {
+            background: rgba(244,67,54,0.2);
+        }
+        
         .student-info {
             background: rgba(255,255,255,0.1);
             padding: 15px 20px;
@@ -566,6 +588,12 @@
             border: 2px solid #f5c6cb;
         }
         
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 2px solid #bee5eb;
+        }
+        
         .loading {
             display: inline-block;
             width: 20px;
@@ -715,6 +743,9 @@
     </style>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <!-- إضافة Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js"></script>
 </head>
 <body>
     <div class="container">
@@ -724,15 +755,20 @@
                     <i class="fas fa-user-graduate"></i>
                     <h1>منصة الاختبارات الإلكترونية</h1>
                 </div>
-                <div class="student-info" id="studentInfoHeader" style="display: none;">
-                    <div class="student-info-item">
-                        <i class="fas fa-user"></i>
-                        <span id="studentNameHeader"></span>
-                    </div>
-                    <div class="student-info-item">
-                        <i class="fas fa-id-card"></i>
-                        <span id="studentSsnHeader"></span>
-                    </div>
+                <div class="sync-status" id="syncStatus">
+                    <i class="fas fa-sync"></i>
+                    <span>جاري التحميل...</span>
+                </div>
+            </div>
+            
+            <div class="student-info" id="studentInfoHeader" style="display: none;">
+                <div class="student-info-item">
+                    <i class="fas fa-user"></i>
+                    <span id="studentNameHeader"></span>
+                </div>
+                <div class="student-info-item">
+                    <i class="fas fa-id-card"></i>
+                    <span id="studentSsnHeader"></span>
                 </div>
             </div>
             
@@ -776,7 +812,7 @@
                         </button>
                         
                         <p style="color: #888; font-size: 14px; margin-top: 25px; text-align: center;">
-                            <i class="fas fa-info-circle"></i> يجب أن يكون رقم السجل المدني مسجلاً لدى المعلم
+                            <i class="fas fa-info-circle"></i> يجب أن يكون رقم السجل المدني مسجلاً لدى المعلم في قاعدة البيانات المركزية
                         </p>
                     </div>
                 </div>
@@ -859,8 +895,8 @@
                     <h2><i class="fas fa-check-circle"></i> تم إكمال الاختبار بنجاح!</h2>
                     
                     <p>شكراً لأدائك الاختبار</p>
-                    <p>تم حفظ إجاباتك بنجاح وسيتم تصحيحها من قبل المعلم</p>
-                    <p>ستظهر النتائج لاحقاً في لوحة النتائج لدى المعلم</p>
+                    <p>تم حفظ إجاباتك بنجاح في قاعدة البيانات المركزية وسيتم تصحيحها من قبل المعلم</p>
+                    <p>ستظهر النتائج لاحقاً في لوحة النتائج لدى المعلم في جميع الأجهزة</p>
                     
                     <div style="background: #e8f0fe; padding: 25px; border-radius: 12px; margin: 40px 0; text-align: right;">
                         <h3 style="margin-top: 0; color: #2c3e50; display: flex; align-items: center; gap: 12px;">
@@ -881,6 +917,18 @@
     </div>
 
     <script>
+        // تهيئة Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyCw5n3bLj8VXzR3X6Xq8m8vJwK9LmN1oP2Q",
+            authDomain: "e-learning-tests-system.firebaseapp.com",
+            databaseURL: "https://e-learning-tests-system-default-rtdb.firebaseio.com",
+            projectId: "e-learning-tests-system",
+            storageBucket: "e-learning-tests-system.appspot.com",
+            messagingSenderId: "123456789012",
+            appId: "1:123456789012:web:abcdef1234567890"
+        };
+
+        // متغيرات التطبيق
         let currentStudent = null;
         let currentTest = null;
         let selectedTest = null;
@@ -889,7 +937,6 @@
         let timerInterval = null;
         let timeRemaining = 0;
         let totalTestTime = 0;
-        let testsList = [];
         
         let drawingCanvas = null;
         let drawingContext = null;
@@ -900,9 +947,17 @@
         let lastX = 0;
         let lastY = 0;
         
+        // متغيرات Firebase
+        let firebaseApp;
+        let database;
+        let isFirebaseConnected = false;
+        let sessionId = 'STUDENT_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        let deviceName = 'Device_' + Math.floor(Math.random() * 1000);
+        let studentsList = {};
+        let testsList = {};
+        let resultsList = {};
+        
         document.addEventListener('DOMContentLoaded', function() {
-            loadTests();
-            
             const ssnInput = document.getElementById('studentSsn');
             ssnInput.addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') {
@@ -914,37 +969,99 @@
                 this.value = this.value.replace(/[^0-9]/g, '');
             });
             
-            updateHeaderInfo();
+            // تهيئة Firebase
+            initializeFirebase();
         });
         
-        function updateHeaderInfo() {
-            const teacherData = {
-                country: localStorage.getItem('teacher_country') || 'المملكة العربية السعودية',
-                administration: localStorage.getItem('teacher_administration') || 'إدارة التعليم',
-                school: localStorage.getItem('teacher_school') || 'مدرسة النموذجية',
-                subject: localStorage.getItem('teacher_subject') || 'الرياضيات'
-            };
-            
-            document.getElementById('countryHeader').textContent = teacherData.country;
-            document.getElementById('administrationHeader').textContent = teacherData.administration;
-            document.getElementById('schoolHeader').textContent = teacherData.school;
-            document.getElementById('subjectHeader').textContent = teacherData.subject;
+        // تهيئة Firebase
+        function initializeFirebase() {
+            try {
+                firebaseApp = firebase.initializeApp(firebaseConfig);
+                database = firebase.database();
+                
+                // مراقبة حالة الاتصال
+                const connectedRef = database.ref(".info/connected");
+                connectedRef.on("value", function(snap) {
+                    if (snap.val() === true) {
+                        isFirebaseConnected = true;
+                        updateConnectionStatus("connected", "متصل بقاعدة البيانات المركزية");
+                        loadSettingsFromFirebase();
+                        setupRealtimeListeners();
+                        registerDevice();
+                    } else {
+                        isFirebaseConnected = false;
+                        updateConnectionStatus("disconnected", "غير متصل - جاري إعادة المحاولة");
+                    }
+                });
+                
+            } catch (error) {
+                console.error("خطأ في تهيئة Firebase:", error);
+                updateConnectionStatus("error", "خطأ في الاتصال بقاعدة البيانات");
+            }
         }
         
-        function saveHeaderInfo() {
-            const country = document.getElementById('country')?.value || 'المملكة العربية السعودية';
-            const administration = document.getElementById('administration')?.value || 'إدارة التعليم';
-            const school = document.getElementById('school')?.value || 'مدرسة النموذجية';
-            const subject = document.getElementById('subject')?.value || 'الرياضيات';
+        // تحديث حالة الاتصال
+        function updateConnectionStatus(status, message) {
+            const statusElement = document.getElementById("syncStatus");
             
-            localStorage.setItem('teacher_country', country);
-            localStorage.setItem('teacher_administration', administration);
-            localStorage.setItem('teacher_school', school);
-            localStorage.setItem('teacher_subject', subject);
+            statusElement.className = "sync-status " + status;
+            statusElement.innerHTML = `<i class="fas fa-${status === 'connected' ? 'check-circle' : 'exclamation-circle'}"></i> <span>${message}</span>`;
         }
         
-        function loadTests() {
-            testsList = JSON.parse(localStorage.getItem('teacher_tests')) || [];
+        // تسجيل الجهاز
+        function registerDevice() {
+            const deviceRef = database.ref('devices/' + sessionId);
+            deviceRef.set({
+                name: deviceName,
+                type: 'student',
+                lastActive: firebase.database.ServerValue.TIMESTAMP,
+                online: true
+            });
+            
+            // تحديث عند الخروج
+            window.addEventListener('beforeunload', function() {
+                deviceRef.update({ online: false });
+            });
+        }
+        
+        // إعداد المستمعين في الوقت الحقيقي
+        function setupRealtimeListeners() {
+            // مراقبة الطلاب
+            database.ref('students').on('value', function(snapshot) {
+                studentsList = snapshot.val() || {};
+            });
+            
+            // مراقبة الاختبارات
+            database.ref('tests').on('value', function(snapshot) {
+                testsList = snapshot.val() || {};
+                if (currentStudent) {
+                    displayAvailableTests();
+                }
+            });
+            
+            // مراقبة النتائج
+            database.ref('results').on('value', function(snapshot) {
+                resultsList = snapshot.val() || {};
+            });
+        }
+        
+        // تحميل الإعدادات من Firebase
+        function loadSettingsFromFirebase() {
+            database.ref('settings/header').once('value')
+                .then(snapshot => {
+                    const settings = snapshot.val() || {};
+                    updateHeaderInfo(settings);
+                })
+                .catch(error => {
+                    console.error("خطأ في تحميل الإعدادات:", error);
+                });
+        }
+        
+        function updateHeaderInfo(settings) {
+            document.getElementById('countryHeader').textContent = settings.country || 'المملكة العربية السعودية';
+            document.getElementById('administrationHeader').textContent = settings.administration || 'إدارة التعليم';
+            document.getElementById('schoolHeader').textContent = settings.school || 'مدرسة النموذجية';
+            document.getElementById('subjectHeader').textContent = settings.subject || 'الرياضيات';
         }
         
         function login() {
@@ -965,12 +1082,24 @@
             loginBtn.innerHTML = '<span class="loading"></span> جاري التحقق...';
             loginBtn.disabled = true;
             
+            // البحث عن الطالب في Firebase
             setTimeout(() => {
-                const studentsList = JSON.parse(localStorage.getItem('teacher_students')) || [];
+                let foundStudent = null;
+                for (const studentId in studentsList) {
+                    const student = studentsList[studentId];
+                    if (student && student.ssn === ssn) {
+                        foundStudent = {
+                            id: studentId,
+                            ssn: student.ssn,
+                            name: student.name,
+                            registeredAt: student.registeredAt
+                        };
+                        break;
+                    }
+                }
                 
-                currentStudent = studentsList.find(student => student.ssn === ssn);
-                
-                if (currentStudent) {
+                if (foundStudent) {
+                    currentStudent = foundStudent;
                     localStorage.setItem('current_student', JSON.stringify(currentStudent));
                     
                     document.getElementById('studentNameHeader').textContent = currentStudent.name;
@@ -982,7 +1111,7 @@
                     
                     showAlert(`مرحباً ${currentStudent.name}!`, 'success');
                 } else {
-                    showAlert('رقم السجل المدني غير مسجل. يرجى التواصل مع المعلم', 'error');
+                    showAlert('رقم السجل المدني غير مسجل في قاعدة البيانات المركزية. يرجى التواصل مع المعلم', 'error');
                 }
                 
                 loginBtn.innerHTML = originalContent;
@@ -1037,7 +1166,14 @@
             const container = document.getElementById('availableTests');
             const noTestsMessage = document.getElementById('noTestsMessage');
             
-            const publishedTests = testsList.filter(test => test.isPublished);
+            // تصفية الاختبارات المنشورة
+            const publishedTests = [];
+            for (const testId in testsList) {
+                const test = testsList[testId];
+                if (test && test.isPublished) {
+                    publishedTests.push({ id: testId, ...test });
+                }
+            }
             
             const now = new Date();
             const availableTests = publishedTests.filter(test => {
@@ -1058,31 +1194,37 @@
             let html = '';
             
             availableTests.forEach((test, index) => {
-                const results = JSON.parse(localStorage.getItem('student_results')) || [];
-                const hasTakenTest = results.some(result => 
-                    result.studentSsn === currentStudent.ssn && result.testId === test.id
-                );
+                // التحقق مما إذا كان الطالب قد أجرى الاختبار مسبقاً
+                let hasTakenTest = false;
+                for (const resultId in resultsList) {
+                    const result = resultsList[resultId];
+                    if (result && result.studentSsn === currentStudent.ssn && result.testId === test.id) {
+                        hasTakenTest = true;
+                        break;
+                    }
+                }
                 
                 const startTime = new Date(test.startTime);
                 const endTime = new Date(test.endTime);
                 
                 html += `
-                    <div class="test-card" onclick="${hasTakenTest ? '' : `selectTest(${index})`}" 
+                    <div class="test-card" onclick="${hasTakenTest ? '' : `selectTest('${test.id}')`}" 
                          style="${hasTakenTest ? 'opacity: 0.7; cursor: not-allowed;' : ''}">
                         <h3>${test.title}</h3>
                         <div class="test-meta">
                             <p><i class="fas fa-book"></i> المادة: ${test.subject}</p>
                             <p><i class="fas fa-clock"></i> المدة: ${test.duration} دقيقة</p>
-                            <p><i class="fas fa-question-circle"></i> الأسئلة: ${test.questions.length}</p>
+                            <p><i class="fas fa-question-circle"></i> الأسئلة: ${test.questions ? test.questions.length : 0}</p>
                             <p><i class="fas fa-graduation-cap"></i> النجاح: ${test.passingScore}%</p>
                             <p><i class="fas fa-calendar-alt"></i> يبدأ: ${startTime.toLocaleString('ar-SA')}</p>
                             <p><i class="fas fa-calendar-times"></i> ينتهي: ${endTime.toLocaleString('ar-SA')}</p>
+                            <p><i class="fas fa-user"></i> المنشئ: ${test.deviceName || 'غير معروف'}</p>
                             ${hasTakenTest ? 
                                 '<p><i class="fas fa-check-circle" style="color: #28a745;"></i> مكتمل</p>' : 
                                 '<p><i class="fas fa-hourglass-start" style="color: #4a6fa5;"></i> متاح</p>'
                             }
                         </div>
-                        <button onclick="event.stopPropagation(); selectTest(${index})" 
+                        <button onclick="event.stopPropagation(); selectTest('${test.id}')" 
                                 class="btn btn-primary" style="width: 100%; margin-top: 15px;"
                                 ${hasTakenTest ? 'disabled style="opacity: 0.5;"' : ''}>
                             ${hasTakenTest ? 
@@ -1097,21 +1239,13 @@
             container.innerHTML = html;
         }
         
-        function selectTest(index) {
-            const publishedTests = testsList.filter(test => test.isPublished);
-            const now = new Date();
-            const availableTests = publishedTests.filter(test => {
-                const start = new Date(test.startTime);
-                const end = new Date(test.endTime);
-                return now >= start && now <= end;
-            });
+        function selectTest(testId) {
+            const test = testsList[testId];
             
-            if (index >= availableTests.length) {
+            if (!test) {
                 showAlert('الاختبار غير متاح', 'error');
                 return;
             }
-            
-            const test = availableTests[index];
             
             const start = new Date(test.startTime);
             const end = new Date(test.endTime);
@@ -1127,17 +1261,22 @@
                 return;
             }
             
-            const results = JSON.parse(localStorage.getItem('student_results')) || [];
-            const hasTakenTest = results.some(result => 
-                result.studentSsn === currentStudent.ssn && result.testId === test.id
-            );
+            // التحقق مما إذا كان الطالب قد أجرى الاختبار مسبقاً
+            let hasTakenTest = false;
+            for (const resultId in resultsList) {
+                const result = resultsList[resultId];
+                if (result && result.studentSsn === currentStudent.ssn && result.testId === testId) {
+                    hasTakenTest = true;
+                    break;
+                }
+            }
             
             if (hasTakenTest) {
                 showAlert('لقد قمت بأداء هذا الاختبار مسبقاً', 'warning');
                 return;
             }
             
-            selectedTest = {...test};
+            selectedTest = { id: testId, ...test };
             currentTest = selectedTest;
             
             document.getElementById('subjectHeader').textContent = currentTest.subject;
@@ -1610,7 +1749,7 @@
             
             const result = calculateResults();
             
-            saveResults(result);
+            saveResultsToFirebase(result);
             
             const detailsContainer = document.getElementById('testDetails');
             detailsContainer.innerHTML = `
@@ -1625,6 +1764,10 @@
                 <div>
                     <p style="margin: 0; color: #2c3e50;"><strong>الإجابات:</strong> ${studentAnswers.filter(a => a !== null).length} من ${currentTest.questions.length}</p>
                     <p style="margin: 5px 0 0; color: #2c3e50;"><strong>زمن الاختبار:</strong> ${currentTest.duration} دقيقة</p>
+                </div>
+                <div>
+                    <p style="margin: 0; color: #2c3e50;"><strong>الدرجة:</strong> ${result.score}/${result.total}</p>
+                    <p style="margin: 5px 0 0; color: #2c3e50;"><strong>النسبة:</strong> ${result.percentage}%</p>
                 </div>
             `;
             
@@ -1656,11 +1799,12 @@
             };
         }
         
-        function saveResults(result) {
-            const results = JSON.parse(localStorage.getItem('student_results')) || [];
-            const teacherResults = JSON.parse(localStorage.getItem('teacher_results')) || [];
+        // حفظ النتائج في Firebase
+        function saveResultsToFirebase(result) {
+            const resultId = 'RESULT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
             
             const studentResult = {
+                id: resultId,
                 studentId: currentStudent.id,
                 studentSsn: currentStudent.ssn,
                 studentName: currentStudent.name,
@@ -1676,16 +1820,27 @@
                 startTime: new Date(Date.now() - (currentTest.duration * 60000) + (timeRemaining * 1000)).toISOString(),
                 completedAt: new Date().toISOString(),
                 duration: currentTest.duration,
-                needsManualGrading: currentTest.questions.some((q, i) => q.type === 'essay' && studentAnswers[i])
+                needsManualGrading: currentTest.questions.some((q, i) => q.type === 'essay' && studentAnswers[i]),
+                deviceName: deviceName,
+                sessionId: sessionId
             };
             
-            results.push(studentResult);
-            localStorage.setItem('student_results', JSON.stringify(results));
-            
-            teacherResults.push(studentResult);
-            localStorage.setItem('teacher_results', JSON.stringify(teacherResults));
-            
-            return studentResult;
+            if (isFirebaseConnected) {
+                database.ref('results/' + resultId).set(studentResult)
+                    .then(() => {
+                        showAlert('تم حفظ نتائج الاختبار بنجاح في قاعدة البيانات المركزية', 'success');
+                    })
+                    .catch(error => {
+                        console.error('خطأ في حفظ النتائج:', error);
+                        showAlert('حدث خطأ في حفظ النتائج في قاعدة البيانات المركزية', 'error');
+                    });
+            } else {
+                showAlert('غير متصل بقاعدة البيانات المركزية. سيتم حفظ النتائج محلياً', 'warning');
+                localStorage.setItem('pending_results', JSON.stringify([
+                    ...(JSON.parse(localStorage.getItem('pending_results')) || []),
+                    studentResult
+                ]));
+            }
         }
         
         function restartTest() {
@@ -1710,5 +1865,4 @@
         }
     </script>
 </body>
-
 </html>
